@@ -1,5 +1,9 @@
 from django.contrib.auth import authenticate
+from collections import Counter
+from datetime import datetime, time, timedelta
+
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.authtoken.models import Token as AuthToken
 from rest_framework.decorators import (
@@ -92,6 +96,71 @@ def staff_me(request):
 
 
 @api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsStaffUser])
+def queue_analytics(request):
+    today = timezone.localdate()
+    first_day = today - timedelta(days=6)
+    window_start = timezone.make_aware(
+        datetime.combine(first_day, time.min)
+    )
+    tokens = list(
+        Token.objects.filter(created_at__gte=window_start).only(
+            'created_at', 'started_at', 'completed_at', 'status'
+        )
+    )
+
+    daily_counts = Counter(timezone.localtime(token.created_at).date() for token in tokens)
+    hourly_counts = Counter(timezone.localtime(token.created_at).hour for token in tokens)
+    wait_minutes = [
+        (token.started_at - token.created_at).total_seconds() / 60
+        for token in tokens
+        if token.started_at
+    ]
+    service_minutes = [
+        (token.completed_at - token.started_at).total_seconds() / 60
+        for token in tokens
+        if token.started_at and token.completed_at
+    ]
+    eligible = [token for token in tokens if token.status != Token.STATUS_CANCELLED]
+    completed = sum(token.status == Token.STATUS_COMPLETED for token in eligible)
+    completion_rate = round(completed / len(eligible) * 100) if eligible else 0
+
+    return Response(
+        {
+            'period_days': 7,
+            'daily_customers': [
+                {
+                    'date': (first_day + timedelta(days=offset)).isoformat(),
+                    'customers': daily_counts.get(
+                        first_day + timedelta(days=offset), 0
+                    ),
+                }
+                for offset in range(7)
+            ],
+            'peak_hour': (
+                max(hourly_counts, key=hourly_counts.get)
+                if hourly_counts
+                else None
+            ),
+            'peak_hour_customers': max(hourly_counts.values(), default=0),
+            'average_wait_minutes': (
+                round(sum(wait_minutes) / len(wait_minutes), 1)
+                if wait_minutes
+                else None
+            ),
+            'average_service_minutes': (
+                round(sum(service_minutes) / len(service_minutes), 1)
+                if service_minutes
+                else None
+            ),
+            'completed_customers': completed,
+            'completion_rate': completion_rate,
+        }
+    )
+
+
+@api_view(['GET'])
 def queue_status(request):
     return Response(_queue_payload())
 
@@ -142,9 +211,11 @@ def book_token(request):
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsStaffUser])
 def call_next(request):
+    now = timezone.now()
     with transaction.atomic():
         Token.objects.filter(status=Token.STATUS_SERVING).update(
-            status=Token.STATUS_COMPLETED
+            status=Token.STATUS_COMPLETED,
+            completed_at=now,
         )
         next_token = (
             Token.objects.select_for_update()
@@ -154,7 +225,8 @@ def call_next(request):
         )
         if next_token:
             next_token.status = Token.STATUS_SERVING
-            next_token.save(update_fields=['status'])
+            next_token.started_at = now
+            next_token.save(update_fields=['status', 'started_at'])
 
     payload = _queue_payload()
     payload['called'] = TokenSerializer(next_token).data if next_token else None

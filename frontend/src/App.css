@@ -316,6 +316,86 @@ body {
   align-items: start;
 }
 
+.analytics-panel {
+  grid-column: 1 / -1;
+}
+
+.analytics-panel .panel-head h2 {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.analytics-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.analytics-metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.analytics-metric > span,
+.analytics-metric small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analytics-metric strong {
+  color: var(--ink);
+  font-size: 23px;
+  line-height: 1.1;
+}
+
+.analytics-daily {
+  margin-top: 22px;
+}
+
+.analytics-daily h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.analytics-day {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analytics-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--paper-2);
+}
+
+.analytics-track span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.analytics-day strong {
+  color: var(--ink-soft);
+  text-align: right;
+}
+
 .staff-shell {
   display: flex;
   flex-direction: column;
@@ -1079,6 +1159,10 @@ body {
   .customer-layout,
   .staff-layout {
     grid-template-columns: 1fr;
+  }
+
+  .analytics-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {

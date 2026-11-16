@@ -127,6 +127,8 @@ export default function App() {
   const [flash, setFlash] = useState('')
   const [lastSynced, setLastSynced] = useState(null)
   const [staffUser, setStaffUser] = useState(null)
+  const [analytics, setAnalytics] = useState(null)
+  const [analyticsError, setAnalyticsError] = useState('')
   const [authChecked, setAuthChecked] = useState(false)
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
 
@@ -191,6 +193,37 @@ export default function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (view !== 'staff' || !staffUser) return undefined
+
+    let cancelled = false
+    const loadAnalytics = async () => {
+      try {
+        const data = await apiRequest('/api/analytics/')
+        if (!cancelled) {
+          setAnalytics(data)
+          setAnalyticsError('')
+        }
+      } catch (err) {
+        if (cancelled) return
+        if (err.status === 401 || err.status === 403) {
+          storeStaffToken(null)
+          setStaffUser(null)
+          setError('Your staff session ended. Please sign in again.')
+        } else {
+          setAnalyticsError(err.message)
+        }
+      }
+    }
+
+    loadAnalytics()
+    const timer = window.setInterval(loadAnalytics, 30000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [view, staffUser])
 
   const queueLoaded = queue !== null
   const nowServing = queue?.now_serving ?? null
@@ -756,6 +789,79 @@ export default function App() {
         >
           {busy === 'reset' ? 'Resetting…' : 'Reset queue'}
         </button>
+      </section>
+
+      <section className="glass panel analytics-panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">Queue analytics</span>
+            <h2>Last 7 days</h2>
+          </div>
+          <span className="muted small">Refreshes every 30 seconds</span>
+        </div>
+
+        {analyticsError ? (
+          <p className="muted" role="status">Analytics unavailable: {analyticsError}</p>
+        ) : !analytics ? (
+          <p className="muted" role="status">Loading queue analytics…</p>
+        ) : (
+          <>
+            <div className="analytics-summary">
+              <div className="analytics-metric">
+                <span>Peak booking hour</span>
+                <strong>
+                  {analytics.peak_hour === null
+                    ? '—'
+                    : `${String(analytics.peak_hour).padStart(2, '0')}:00`}
+                </strong>
+                <small>{analytics.peak_hour_customers} customers</small>
+              </div>
+              <div className="analytics-metric">
+                <span>Average wait</span>
+                <strong>
+                  {analytics.average_wait_minutes === null
+                    ? '—'
+                    : `${analytics.average_wait_minutes} min`}
+                </strong>
+                <small>From booking to being called</small>
+              </div>
+              <div className="analytics-metric">
+                <span>Customers served</span>
+                <strong>{analytics.completed_customers}</strong>
+                <small>Completed tokens</small>
+              </div>
+              <div className="analytics-metric">
+                <span>Counter efficiency</span>
+                <strong>{analytics.completion_rate}%</strong>
+                <small>
+                  {analytics.average_service_minutes === null
+                    ? 'Completion rate, excluding cancellations'
+                    : `${analytics.average_service_minutes} min average service time`}
+                </small>
+              </div>
+            </div>
+
+            <div className="analytics-daily">
+              <h3>Daily customers</h3>
+              {analytics.daily_customers.map((day) => {
+                const maximum = Math.max(
+                  1,
+                  ...analytics.daily_customers.map((item) => item.customers),
+                )
+                const width = `${(day.customers / maximum) * 100}%`
+                return (
+                  <div className="analytics-day" key={day.date}>
+                    <span>{new Date(`${day.date}T00:00:00`).toLocaleDateString([], { weekday: 'short' })}</span>
+                    <div className="analytics-track" aria-label={`${day.customers} customers`}>
+                      <span style={{ width }} />
+                    </div>
+                    <strong>{day.customers}</strong>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
       </section>
         </div>
       </div>
