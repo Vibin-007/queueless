@@ -170,26 +170,6 @@ body {
   background: var(--ink);
 }
 
-.live-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 7px 13px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.live-pill.is-offline {
-  color: var(--danger);
-  border-color: var(--danger-line);
-}
-
 .dot {
   display: inline-block;
   width: 7px;
@@ -1181,9 +1161,6 @@ body {
     flex: 1;
   }
 
-  .live-pill {
-    margin-left: auto;
-  }
 }
 
 @media (max-width: 600px) {
@@ -1258,11 +1235,6 @@ body {
 }
 
 @media (max-width: 400px) {
-  .live-pill {
-    padding: 7px 10px;
-    font-size: 11px;
-  }
-
   .tab {
     padding: 8px 12px;
     font-size: 13px;

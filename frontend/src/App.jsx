@@ -905,10 +905,6 @@ export default function App() {
             </button>
           </nav>
 
-          <div className={`live-pill ${syncError ? 'is-offline' : ''}`}>
-            <span className="dot" />
-            {syncError ? 'Offline' : 'Live sync'}
-          </div>
         </header>
       </div>
 
