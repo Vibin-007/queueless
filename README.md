@@ -44,6 +44,16 @@ python manage.py runserver
 
 The API is served at `http://127.0.0.1:8000/`.
 
+### Staff authentication
+
+Staff actions require a Django user with `is_staff` enabled. Create a counter account with a password prompt (the password is not placed in shell history):
+
+```bash
+python manage.py create_staff --username counter --first-name Counter
+```
+
+You can also create or manage staff accounts in Django admin after creating a superuser. Open the **Counter staff** view in the frontend and sign in with that account. The browser keeps a token for the staff session; signing out revokes it.
+
 ### Frontend
 
 ```bash
@@ -66,9 +76,15 @@ Base path: `/api/`
 | ------ | ------------------------- | ------------------------------------------------- |
 | GET    | `/status/`                | Current queue: now serving, waiting list, ETA      |
 | POST   | `/book/`                  | Book a token — body: `{ "customer_name", "service_type" }` |
-| POST   | `/next/`                  | Complete the current token and call the next one   |
-| POST   | `/cancel/<token_number>/` | Cancel a waiting token                             |
-| POST   | `/reset/`                 | Delete all tokens and reset the queue              |
+| POST   | `/auth/login/`            | Sign in with staff username and password; returns a token |
+| GET    | `/auth/me/`               | Return the signed-in staff profile (staff token required) |
+| POST   | `/auth/logout/`           | Revoke the signed-in token |
+| POST   | `/next/`                  | Complete the current token and call the next one (staff token required) |
+| POST   | `/skip/<token_number>/`   | Skip a waiting token (staff token required) |
+| POST   | `/cancel/<token_number>/` | Cancel a waiting token from the customer view |
+| POST   | `/reset/`                 | Delete all tokens and reset the queue (staff token required) |
+
+Send the returned token as `Authorization: Token <token>` when calling protected endpoints. Queue status, booking, and customer cancellation remain public.
 
 `service_type` must be one of `General`, `Priority`, or `Support`.
 

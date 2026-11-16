@@ -3,9 +3,35 @@ import './App.css'
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '')
 const STORAGE_KEY = 'queueless:my-token'
+const STAFF_TOKEN_KEY = 'queueless:staff-token'
 const POLL_INTERVAL = 3000
 const MINUTES_PER_TOKEN = 5
 const SERVICE_OPTIONS = ['General', 'Priority', 'Support']
+
+function readStaffToken() {
+  try {
+    return window.localStorage.getItem(STAFF_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeStaffToken(token) {
+  try {
+    if (token) {
+      window.localStorage.setItem(STAFF_TOKEN_KEY, token)
+    } else {
+      window.localStorage.removeItem(STAFF_TOKEN_KEY)
+    }
+  } catch {
+    return
+  }
+}
+
+function staffAuthHeader() {
+  const token = readStaffToken()
+  return token ? { Authorization: `Token ${token}` } : {}
+}
 
 async function apiRequest(path, options = {}) {
   let response
@@ -14,6 +40,7 @@ async function apiRequest(path, options = {}) {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...staffAuthHeader(),
         ...(options.headers || {}),
       },
     })
@@ -57,6 +84,24 @@ function formatTime(value) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function TicketIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
+      <path d="M14 6v12" strokeDasharray="2 2" />
+    </svg>
+  )
+}
+
 function ServiceBadge({ service }) {
   const key = String(service || 'General').toLowerCase()
   return <span className={`badge service-${key}`}>{service || 'General'}</span>
@@ -81,6 +126,9 @@ export default function App() {
   const [syncError, setSyncError] = useState('')
   const [flash, setFlash] = useState('')
   const [lastSynced, setLastSynced] = useState(null)
+  const [staffUser, setStaffUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
 
   const storeToken = useCallback((token) => {
     setMyToken(token)
@@ -120,6 +168,29 @@ export default function App() {
     const timer = window.setTimeout(() => setFlash(''), 5000)
     return () => window.clearTimeout(timer)
   }, [flash])
+
+  useEffect(() => {
+    if (!readStaffToken()) {
+      setAuthChecked(true)
+      return undefined
+    }
+
+    let cancelled = false
+    apiRequest('/api/auth/me/')
+      .then((user) => {
+        if (!cancelled) setStaffUser(user)
+      })
+      .catch(() => {
+        if (!cancelled) storeStaffToken(null)
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const queueLoaded = queue !== null
   const nowServing = queue?.now_serving ?? null
@@ -205,6 +276,60 @@ export default function App() {
     }
   }
 
+  const handleStaffAuthFailure = (err) => {
+    if (err.status === 401 || err.status === 403) {
+      storeStaffToken(null)
+      setStaffUser(null)
+      setError('Your staff session ended. Please sign in again.')
+      return true
+    }
+    return false
+  }
+
+  const handleLogin = async (event) => {
+    event.preventDefault()
+    const username = loginForm.username.trim()
+    if (!username || !loginForm.password) {
+      setError('Enter your staff username and password.')
+      return
+    }
+
+    setBusy('login')
+    setError('')
+    setFlash('')
+    try {
+      const data = await apiRequest('/api/auth/login/', {
+        method: 'POST',
+        body: JSON.stringify({ username, password: loginForm.password }),
+      })
+      storeStaffToken(data.token)
+      setStaffUser(data.user)
+      setLoginForm({ username: '', password: '' })
+      setFlash(`Signed in as ${data.user.full_name || data.user.username}.`)
+      refresh()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const handleLogout = async () => {
+    setBusy('logout')
+    setError('')
+    try {
+      await apiRequest('/api/auth/logout/', { method: 'POST' })
+    } catch (err) {
+      if (err.status !== 401) setError(err.message)
+    } finally {
+      storeStaffToken(null)
+      setStaffUser(null)
+      setBusy('')
+      setView('customer')
+      setFlash('Signed out of the staff counter.')
+    }
+  }
+
   const handleCallNext = async () => {
     setBusy('next')
     setError('')
@@ -217,7 +342,7 @@ export default function App() {
         setFlash('No one is waiting. The counter is clear.')
       }
     } catch (err) {
-      setError(err.message)
+      if (!handleStaffAuthFailure(err)) setError(err.message)
     } finally {
       setBusy('')
     }
@@ -227,11 +352,11 @@ export default function App() {
     setBusy(`cancel-${token.id}`)
     setError('')
     try {
-      const data = await apiRequest(`/api/cancel/${token.token_number}/`, { method: 'POST' })
+      const data = await apiRequest(`/api/skip/${token.token_number}/`, { method: 'POST' })
       applyQueue(data)
       setFlash(`Removed token #${token.token_number} (${token.customer_name}) from the queue.`)
     } catch (err) {
-      setError(err.message)
+      if (!handleStaffAuthFailure(err)) setError(err.message)
       refresh()
     } finally {
       setBusy('')
@@ -252,7 +377,7 @@ export default function App() {
       storeToken(null)
       setFlash('Queue reset. Token numbering restarts at 101.')
     } catch (err) {
-      setError(err.message)
+      if (!handleStaffAuthFailure(err)) setError(err.message)
     } finally {
       setBusy('')
     }
@@ -354,7 +479,9 @@ export default function App() {
 
         {!myToken && (
           <div className="empty-state">
-            <div className="empty-glyph">Q</div>
+            <div className="empty-glyph" aria-hidden="true">
+              <TicketIcon />
+            </div>
             <h3>No active token</h3>
             <p>Book a token and it will appear here — even after a refresh.</p>
           </div>
@@ -435,9 +562,108 @@ export default function App() {
     </div>
   )
 
-  const renderStaff = () => (
-    <div className="staff-layout">
-      <section className="glass panel call-panel">
+  const renderStaff = () => {
+    if (!authChecked) {
+      return (
+        <div className="staff-lock">
+          <section className="glass panel login-panel">
+            <div className="empty-state compact">
+              <p className="muted">Checking staff session…</p>
+            </div>
+          </section>
+        </div>
+      )
+    }
+
+    if (!staffUser) {
+      return (
+        <div className="staff-lock">
+          <section className="glass panel login-panel">
+            <div className="panel-head">
+              <span className="eyebrow">Staff access</span>
+            </div>
+            <h2>Sign in to the counter</h2>
+            <p className="muted">
+              Staff accounts can call the next token, skip customers, and reset the queue.
+            </p>
+
+            <form className="stack" onSubmit={handleLogin}>
+              <label className="field">
+                <span>Username</span>
+                <input
+                  type="text"
+                  value={loginForm.username}
+                  onChange={(event) =>
+                    setLoginForm({ ...loginForm, username: event.target.value })
+                  }
+                  placeholder="staff"
+                  autoComplete="username"
+                  disabled={busy === 'login'}
+                />
+              </label>
+
+              <label className="field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  value={loginForm.password}
+                  onChange={(event) =>
+                    setLoginForm({ ...loginForm, password: event.target.value })
+                  }
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  disabled={busy === 'login'}
+                />
+              </label>
+
+              <button
+                className="btn btn-primary btn-block"
+                type="submit"
+                disabled={busy === 'login'}
+              >
+                {busy === 'login' ? (
+                  <span className="btn-busy">
+                    <span className="spinner" />
+                    Signing in…
+                  </span>
+                ) : (
+                  'Sign in'
+                )}
+              </button>
+            </form>
+
+            <p className="micro">
+              Staff accounts are created by an administrator. Ask your manager if you need access.
+            </p>
+          </section>
+        </div>
+      )
+    }
+
+    return (
+      <div className="staff-shell">
+        <div className="staff-bar">
+          <div className="staff-id">
+            <span className="staff-avatar" aria-hidden="true">
+              {(staffUser.full_name || staffUser.username).charAt(0).toUpperCase()}
+            </span>
+            <div className="staff-id-text">
+              <span className="staff-name">{staffUser.full_name || staffUser.username}</span>
+              <span className="staff-role">Signed in · counter staff</span>
+            </div>
+          </div>
+          <button
+            className="btn btn-sm btn-ghost"
+            type="button"
+            onClick={handleLogout}
+            disabled={busy === 'logout'}
+          >
+            {busy === 'logout' ? 'Signing out…' : 'Sign out'}
+          </button>
+        </div>
+
+        <div className="staff-layout">
+          <section className="glass panel call-panel">
         <div className="panel-head">
           <span className="eyebrow">Counter control</span>
           <span className={`live-chip ${syncError ? 'is-offline' : ''}`}>
@@ -531,51 +757,56 @@ export default function App() {
           {busy === 'reset' ? 'Resetting…' : 'Reset queue'}
         </button>
       </section>
-    </div>
-  )
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="app-shell">
-      <div className="orb orb-one" aria-hidden="true" />
-      <div className="orb orb-two" aria-hidden="true" />
+    <div className="app-shell" data-view={view}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
 
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            Q
+      <div className="topbar-wrap">
+        <header className="topbar">
+          <div className="brand">
+            <div className="brand-mark" aria-hidden="true">
+              <TicketIcon />
+            </div>
+            <div className="brand-text">
+              <span className="brand-name">QueueLess</span>
+              <span className="brand-sub">Virtual queue manager</span>
+            </div>
           </div>
-          <div className="brand-text">
-            <span className="brand-name">QueueLess</span>
-            <span className="brand-sub">Virtual queue manager</span>
+
+          <nav className="tabs" aria-label="Choose view">
+            <button
+              type="button"
+              className={view === 'customer' ? 'tab is-active' : 'tab'}
+              onClick={() => setView('customer')}
+              aria-pressed={view === 'customer'}
+            >
+              Customer
+            </button>
+            <button
+              type="button"
+              className={view === 'staff' ? 'tab is-active' : 'tab'}
+              onClick={() => setView('staff')}
+              aria-pressed={view === 'staff'}
+            >
+              Counter staff
+            </button>
+          </nav>
+
+          <div className={`live-pill ${syncError ? 'is-offline' : ''}`}>
+            <span className="dot" />
+            {syncError ? 'Offline' : 'Live sync'}
           </div>
-        </div>
+        </header>
+      </div>
 
-        <nav className="tabs" aria-label="Choose view">
-          <button
-            type="button"
-            className={view === 'customer' ? 'tab is-active' : 'tab'}
-            onClick={() => setView('customer')}
-            aria-pressed={view === 'customer'}
-          >
-            Customer
-          </button>
-          <button
-            type="button"
-            className={view === 'staff' ? 'tab is-active' : 'tab'}
-            onClick={() => setView('staff')}
-            aria-pressed={view === 'staff'}
-          >
-            Counter staff
-          </button>
-        </nav>
-
-        <div className={`live-pill ${syncError ? 'is-offline' : ''}`}>
-          <span className="dot" />
-          {syncError ? 'Offline' : 'Live sync'}
-        </div>
-      </header>
-
-      <main className="container">
+      <main className="container" id="main" tabIndex={-1}>
         {syncError && (
           <div className="banner banner-warning" role="status">
             <span>

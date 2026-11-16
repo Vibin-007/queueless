@@ -1,9 +1,18 @@
+from django.contrib.auth import authenticate
 from django.db import transaction
-from rest_framework.decorators import api_view
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.authtoken.models import Token as AuthToken
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import Token
-from .serializers import TokenSerializer
+from .permissions import IsStaffUser
+from .serializers import StaffUserSerializer, TokenSerializer
 
 SERVICE_TYPES = {choice[0] for choice in Token.SERVICE_CHOICES}
 ESTIMATED_MINUTES_PER_TOKEN = 5
@@ -26,6 +35,60 @@ def _queue_payload():
         'total_waiting': total_waiting,
         'est_wait_minutes': total_waiting * ESTIMATED_MINUTES_PER_TOKEN,
     }
+
+
+@api_view(['POST'])
+def staff_login(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+
+    if not isinstance(username, str) or not isinstance(password, str):
+        return Response(
+            {'error': 'username and password are required.'},
+            status=400,
+        )
+    username = username.strip()
+    if not username or not password:
+        return Response(
+            {'error': 'username and password are required.'},
+            status=400,
+        )
+
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return Response(
+            {'error': 'Invalid username or password.'},
+            status=400,
+        )
+    if not user.is_staff:
+        return Response(
+            {'error': 'This account does not have staff access.'},
+            status=403,
+        )
+
+    token, _ = AuthToken.objects.get_or_create(user=user)
+    return Response(
+        {
+            'token': token.key,
+            'user': StaffUserSerializer(user).data,
+        }
+    )
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def staff_logout(request):
+    if isinstance(request.auth, AuthToken):
+        request.auth.delete()
+    return Response(status=204)
+
+
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsStaffUser])
+def staff_me(request):
+    return Response(StaffUserSerializer(request.user).data)
 
 
 @api_view(['GET'])
@@ -76,6 +139,8 @@ def book_token(request):
 
 
 @api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsStaffUser])
 def call_next(request):
     with transaction.atomic():
         Token.objects.filter(status=Token.STATUS_SERVING).update(
@@ -96,8 +161,7 @@ def call_next(request):
     return Response(payload)
 
 
-@api_view(['POST'])
-def cancel_token(request, token_number):
+def _cancel_waiting_token(token_number):
     token = (
         Token.objects.filter(
             token_number=token_number,
@@ -124,6 +188,20 @@ def cancel_token(request, token_number):
 
 
 @api_view(['POST'])
+def cancel_token(request, token_number):
+    return _cancel_waiting_token(token_number)
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsStaffUser])
+def skip_token(request, token_number):
+    return _cancel_waiting_token(token_number)
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsStaffUser])
 def reset_queue(request):
     deleted_count, _ = Token.objects.all().delete()
     return Response(
